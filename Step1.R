@@ -1,14 +1,21 @@
-options(rgl.useNULL=TRUE)
+#R scripts for processing the Xenium data from HSV-1 infected skin organoids
 
 #Install Voltron from github
 #devtools::install_github("Artur-man/VoltRon", force=TRUE)
 #install other packages from CRAN or Bioconductor
+
+options(java.parameters = "-Xmx28g")
+options(rgl.useNULL=TRUE)
+library(VoltRon)
+
 #Packages rJava and RBioFormats are not needed are only needed for initial import
+library(rJava)
+library(RBioFormats)
+
 
 library(Seurat)
 library(dplyr)
 library(ggplot2)
-library(VoltRon)
 library(tibble)
 library(tidyr)
 library(igraph)
@@ -19,8 +26,6 @@ library(dendextend)
 library(stringr)
 library(gridExtra)
 library(cowplot)
-#source("~/temp/transfer/notes and scripts/summarySE.R")
-source("~/Documents/Largescale-data/notes and scripts/summarySE.R")
 library(sf)
 library(concaveman)
 library(data.table)
@@ -29,6 +34,13 @@ library(presto)
 library(purrr)
 library(ggpubr)
 library(RColorBrewer)
+
+
+
+#The summarySE.R function was taken from http://www.cookbook-r.com/Manipulating_data/Summarizing_data/
+#Note that it uses plyr, which can create confusion when calling dplyr functions without dplyr:: 
+source("./summarySE.R")
+
 
 #From https://stackoverflow.com/questions/8197559/emulate-ggplot2-default-color-palette
 gg_color_hue <- function(n) {
@@ -98,3 +110,46 @@ fixVoltRon <- function(object){
   }
   object
 }
+
+
+#Import Xenium data folder (can be obtained from https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE313919)
+#Note that this step is memory intense. Consider increasing the resolution_level if it does not work
+skin_all <- importXenium("/Volumes/Storage/MoreApplications/stuff/Xenium/Xenium_Stockholm_Second_Run/TC_MDC/catalyst_release_TC_MDC_Dec23/Skin_organoids/", resolution_level = 2, overwrite_resolution = TRUE)
+saveRDS(skin_all, "skin_all.rds")
+
+#Filter out low quality cells
+skin_all$HSV1Count <- colSums(vrData(skin_all, norm = FALSE)[c("HSV1_LAT", "HSV1_UL27", "HSV1_UL29", "HSV1_UL54", "HSV1_US1"),])
+skin_all$NonVirusCount <- skin_all$Count - skin_all$HSV1Count
+skin_all <- subset(skin_all, NonVirusCount > 10)
+
+#Annotate the 12 individual organoids. In the interface, use simple labels (R1, R2, R3, R21 etc.) that are then expanded
+#The data can also be transferred from the fully annotated object at https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE313919 , simply copy the annotation column from the @metadata@cell dataframe
+skin_all_ann <- annotateSpatialData(skin_all, label="annotation", pt.size=0.1)
+skin_all_ann@metadata@cell <- skin_all_ann@metadata@cell %>% mutate(annotation = case_when(annotation == "R1" ~ "region_0dpi_rep1", 
+                                                                                            annotation == "R2" ~ "region_0dpi_rep2", 
+                                                                                            annotation == "R3" ~ "region_0dpi_rep3", 
+                                                                                            annotation == "R21" ~ "region_2dpi_rep1", 
+                                                                                            annotation == "R22" ~ "region_2dpi_rep2", 
+                                                                                            annotation == "R23" ~ "region_2dpi_rep3",
+                                                                                            annotation == "R31" ~ "region_3dpi_rep1", 
+                                                                                            annotation == "R32" ~ "region_3dpi_rep2", 
+                                                                                            annotation == "R33" ~ "region_3dpi_rep3",
+                                                                                            annotation == "R41" ~ "region_4dpi_rep1", 
+                                                                                            annotation == "R42" ~ "region_4dpi_rep2", 
+                                                                                            annotation == "R43" ~ "region_4dpi_rep3",
+                                                                                            annotation == "undefined" ~ "undefined"))
+
+#Add timepoint column
+skin_all_ann@metadata@cell$timepoint <- gsub("^[^\\_]*_([^\\_]*)_[^\\_]*$", "\\1", skin_all_ann@metadata@cell$annotation, perl=TRUE)
+
+#Plot and check
+vrSpatialPlot(skin_all_ann, group.by = "annotation", alpha = 1, plot.segments = TRUE, background.color = "black", assay="Assay1")
+vrSpatialPlot(skin_all_ann, group.by = "timepoint", alpha = 1, plot.segments = TRUE, background.color = "black", assay="Assay1")
+
+#To strengthen the annotation, include the three uninfected organoids from the Merkel cell polyomavirus experiment (Albertini et al.)
+pyv_0dpi <- importXenium("/Volumes/Storage/MoreApplications/stuff/Xenium/20240418__105901__ST004_X0057_X0058_Landthaler/output-XETG00046__0021832__Region_4__20240418__110821", resolution_level = 2, overwrite_resolution = TRUE)
+
+
+#Temporary
+pyv_0dpi <- readRDS("pyv_0dpi.rds")
+saveRDS(skin_all_ann, "skin_all_ann_temp.rds")
